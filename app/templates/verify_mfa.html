@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-box">
+        <h2>Two-Factor Authentication</h2>
+        <p>Enter the 6-digit code from your authenticator app:</p>
+        
+        <div id="mfaStep">
+            <div class="form-group">
+                <input type="text" id="totpCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}" autofocus>
+            </div>
+            
+            <button type="button" id="verifyMfaBtn" class="btn-primary">Verify</button>
+            
+            <p class="toggle-link" style="margin-top: 20px;">
+                <a href="#" id="toggleBackup">Don't have your authenticator app?</a>
+            </p>
+        </div>
+        
+        <div id="backupStep" style="display:none;">
+            <h3>Use Backup Code</h3>
+            <p>Enter one of your backup codes:</p>
+            
+            <div class="form-group">
+                <input type="text" id="backupCode" placeholder="Enter backup code">
+            </div>
+            
+            <button type="button" id="verifyBackupBtn" class="btn-primary">Verify</button>
+            
+            <p class="toggle-link" style="margin-top: 20px;">
+                <a href="#" id="toggleMFA">Use authenticator app instead</a>
+            </p>
+        </div>
+        
+        <div id="message" class="message"></div>
+    </div>
+</div>
+
+<script>
+    const mfaStep = document.getElementById('mfaStep');
+    const backupStep = document.getElementById('backupStep');
+    const toggleBackup = document.getElementById('toggleBackup');
+    const toggleMFA = document.getElementById('toggleMFA');
+    const messageDiv = document.getElementById('message');
+    
+    toggleBackup.addEventListener('click', (e) => {
+        e.preventDefault();
+        mfaStep.style.display = 'none';
+        backupStep.style.display = 'block';
+    });
+    
+    toggleMFA.addEventListener('click', (e) => {
+        e.preventDefault();
+        mfaStep.style.display = 'block';
+        backupStep.style.display = 'none';
+    });
+    
+    document.getElementById('verifyMfaBtn').addEventListener('click', async () => {
+        const code = document.getElementById('totpCode').value;
+        
+        if (!code || code.length !== 6) {
+            messageDiv.textContent = 'Please enter a 6-digit code';
+            messageDiv.className = 'message error';
+            return;
+        }
+        
+        try {
+            const response = await fetch('{{ url_for("auth.verify_mfa") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ token: code, use_backup: false })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                window.location.href = '{{ url_for("auth.dashboard") }}';
+            } else {
+                messageDiv.textContent = data.message;
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            messageDiv.textContent = 'An error occurred: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+    
+    document.getElementById('verifyBackupBtn').addEventListener('click', async () => {
+        const code = document.getElementById('backupCode').value;
+        
+        if (!code) {
+            messageDiv.textContent = 'Please enter a backup code';
+            messageDiv.className = 'message error';
+            return;
+        }
+        
+        try {
+            const response = await fetch('{{ url_for("auth.verify_mfa") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ token: code, use_backup: true })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                window.location.href = '{{ url_for("auth.dashboard") }}';
+            } else {
+                messageDiv.textContent = data.message;
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            messageDiv.textContent = 'An error occurred: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-box">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit" class="btn-primary">Login</button>
+            <button type="button" id="passkeyLoginBtn" class="btn-secondary">Sign In with Passkey</button>
+        </form>
+        
+        <p class="auth-link">Don't have an account? <a href="{{ url_for('auth.register') }}">Register here</a></p>
+        <div id="message" class="message"></div>
+    </div>
+</div>
+
+<script>
+    function base64urlToBuffer(value) {
+        const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+        const binary = atob(padded);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function bufferToBase64url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+
+    function toPublicKeyCredentialRequestOptions(options) {
+        const publicKey = { ...options };
+        publicKey.challenge = base64urlToBuffer(publicKey.challenge);
+        if (publicKey.allowCredentials) {
+            publicKey.allowCredentials = publicKey.allowCredentials.map((cred) => ({
+                ...cred,
+                id: base64urlToBuffer(cred.id),
+            }));
+        }
+        return publicKey;
+    }
+
+    function assertionToJSON(assertion) {
+        return {
+            id: assertion.id,
+            rawId: bufferToBase64url(assertion.rawId),
+            type: assertion.type,
+            response: {
+                authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+                clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+                signature: bufferToBase64url(assertion.response.signature),
+                userHandle: assertion.response.userHandle
+                    ? bufferToBase64url(assertion.response.userHandle)
+                    : null,
+            },
+            clientExtensionResults: assertion.getClientExtensionResults(),
+        };
+    }
+
+    function getPasskeyEnvironmentError() {
+        const host = window.location.hostname;
+        const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+        if (ipv4.test(host) || host.includes(':')) {
+            return 'Passkeys are not supported on IP-address hosts. Open this app with http://localhost:5000.';
+        }
+
+        if (!window.isSecureContext && host !== 'localhost') {
+            return 'Passkeys require HTTPS unless you are using localhost.';
+        }
+
+        return null;
+    }
+
+    async function readResponsePayload(response) {
+        const text = await response.text();
+        if (!text) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(text);
+        } catch (_error) {
+            return { message: text };
+        }
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const messageDiv = document.getElementById('message');
+        
+        const formData = {
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value
+        };
+        
+        try {
+            const response = await fetch('{{ url_for("auth.login") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData)
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                if (data.requires_mfa) {
+                    window.location.href = '{{ url_for("auth.verify_mfa") }}';
+                } else {
+                    window.location.href = '{{ url_for("auth.dashboard") }}';
+                }
+            } else {
+                messageDiv.textContent = data.message;
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            messageDiv.textContent = 'An error occurred: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+
+    document.getElementById('passkeyLoginBtn').addEventListener('click', async () => {
+        const messageDiv = document.getElementById('message');
+        const username = document.getElementById('username').value.trim();
+
+        const environmentError = getPasskeyEnvironmentError();
+        if (environmentError) {
+            messageDiv.textContent = environmentError;
+            messageDiv.className = 'message error';
+            return;
+        }
+
+        if (!window.PublicKeyCredential) {
+            messageDiv.textContent = 'This browser does not support passkeys.';
+            messageDiv.className = 'message error';
+            return;
+        }
+
+        if (!username) {
+            messageDiv.textContent = 'Enter your username before using passkey sign-in.';
+            messageDiv.className = 'message error';
+            return;
+        }
+
+        try {
+            const optionsResponse = await fetch('{{ url_for("auth.passkey_auth_options") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username }),
+            });
+
+            const optionsData = await readResponsePayload(optionsResponse);
+            if (!optionsResponse.ok) {
+                messageDiv.textContent = (optionsData && optionsData.message) || 'Unable to start passkey sign-in.';
+                messageDiv.className = 'message error';
+                return;
+            }
+
+            if (!optionsData.success) {
+                messageDiv.textContent = optionsData.message || 'Unable to start passkey sign-in.';
+                messageDiv.className = 'message error';
+                return;
+            }
+
+            const assertion = await navigator.credentials.get({
+                publicKey: toPublicKeyCredentialRequestOptions(optionsData.options),
+            });
+
+            const verifyResponse = await fetch('{{ url_for("auth.passkey_auth_verify") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    username,
+                    credential: assertionToJSON(assertion),
+                }),
+            });
+
+            const verifyData = await readResponsePayload(verifyResponse);
+            if (!verifyResponse.ok) {
+                messageDiv.textContent = (verifyData && verifyData.message) || 'Passkey sign-in failed.';
+                messageDiv.className = 'message error';
+                return;
+            }
+
+            if (verifyData.success) {
+                window.location.href = '{{ url_for("auth.dashboard") }}';
+            } else {
+                messageDiv.textContent = verifyData.message || 'Passkey sign-in failed.';
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            messageDiv.textContent = 'Passkey sign-in failed: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+</script>
+{% endblock %}

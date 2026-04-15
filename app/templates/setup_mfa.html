@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-box">
+        <h2>Setup Two-Factor Authentication</h2>
+        
+        <div id="setupStep" class="setup-step">
+            <h3>Step 1: Scan QR Code</h3>
+            <p>Use an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, etc.) to scan the QR code below:</p>
+            
+            <div id="qrContainer" style="text-align: center;">
+                <button type="button" id="generateBtn" class="btn-primary">Generate QR Code</button>
+            </div>
+            
+            <div id="secretContainer" style="display:none; text-align: center; margin-top: 20px;">
+                <p><strong>Or enter this code manually:</strong></p>
+                <code id="secretCode" style="font-size: 18px; padding: 10px; background: #f0f0f0;"></code>
+            </div>
+        </div>
+        
+        <div id="verifyStep" style="display:none;" class="setup-step">
+            <h3>Step 2: Verify Authentication Code</h3>
+            <p>Enter the 6-digit code from your authenticator app:</p>
+            
+            <div class="form-group">
+                <input type="text" id="verificationCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}">
+            </div>
+            
+            <button type="button" id="verifyBtn" class="btn-primary">Verify</button>
+        </div>
+        
+        <div id="backupStep" style="display:none;" class="setup-step">
+            <h3>Step 3: Save Backup Codes</h3>
+            <p>Save these backup codes in a safe place. You can use them to log in if you lose access to your authenticator app:</p>
+            
+            <div id="backupCodesContainer" style="background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                <code id="backupCodes" style="font-family: monospace; line-height: 1.8;"></code>
+            </div>
+            
+            <button type="button" onclick="downloadBackupCodes()" class="btn-secondary">Download Codes</button>
+            <button type="button" id="doneBtn" data-dashboard-url="{{ url_for('auth.dashboard') }}" class="btn-primary">Done</button>
+        </div>
+        
+        <div id="message" class="message"></div>
+    </div>
+</div>
+
+<script>
+    let generatedCodes = [];
+    
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+        console.log('[JS] Generate button clicked!');
+        const messageDiv = document.getElementById('message');
+        messageDiv.textContent = 'Generating QR code...';
+        messageDiv.className = 'message info';
+        
+        try {
+            const fetchUrl = '{{ url_for("auth.setup_mfa") }}';
+            console.log('[JS] Fetch URL:', fetchUrl);
+            console.log('[JS] Sending generate request...');
+            const response = await fetch(fetchUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ action: 'generate' })
+            });
+            
+            console.log('Response status:', response.status, response.ok);
+            
+            if (!response.ok) {
+                const text = await response.text();
+                console.error('Server error response:', text);
+                messageDiv.textContent = 'Server error: ' + (text || response.statusText);
+                messageDiv.className = 'message error';
+                return;
+            }
+            
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                const text = await response.text();
+                console.error('Failed to parse JSON:', e, 'Text:', text);
+                messageDiv.textContent = 'Invalid JSON response from server: ' + text;
+                messageDiv.className = 'message error';
+                return;
+            }
+            
+            console.log('Full response data:', data);
+            console.log('data.success:', data.success);
+            console.log('data.qr_code present:', !!data.qr_code);
+            console.log('data.qr_code length:', data.qr_code ? data.qr_code.length : 'N/A');
+            console.log('data.secret:', data.secret);
+            
+            if (data.success) {
+                if (!data.qr_code) {
+                    console.error('ERROR: qr_code is missing or empty in response!');
+                    messageDiv.textContent = 'Error: No QR code data returned from server';
+                    messageDiv.className = 'message error';
+                    return;
+                }
+                
+                if (!data.qr_code.startsWith('data:image')) {
+                    console.error('ERROR: qr_code does not appear to be a valid data URI!');
+                    console.log('QR code value:', data.qr_code.substring(0, 100));
+                    messageDiv.textContent = 'Error: Invalid QR code data format';
+                    messageDiv.className = 'message error';
+                    return;
+                }
+                
+                console.log('Setting QR image from base64 data URI');
+                document.getElementById('qrContainer').innerHTML = `<img src="${data.qr_code}" alt="QR Code" style="width: 250px; height: 250px;">`;
+                document.getElementById('secretCode').textContent = data.secret;
+                document.getElementById('secretContainer').style.display = 'block';
+                document.getElementById('verifyStep').style.display = 'block';
+                messageDiv.textContent = '';
+                messageDiv.className = 'message';
+            } else {
+                console.error('Server returned success: false, message:', data.message);
+                messageDiv.textContent = data.message || 'Failed to generate QR code';
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            console.error('Fetch error:', error);
+            messageDiv.textContent = 'An error occurred: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+    
+    document.getElementById('verifyBtn').addEventListener('click', async () => {
+        const messageDiv = document.getElementById('message');
+        const code = document.getElementById('verificationCode').value;
+        
+        if (!code || code.length !== 6) {
+            messageDiv.textContent = 'Please enter a 6-digit code';
+            messageDiv.className = 'message error';
+            return;
+        }
+        
+        try {
+            const response = await fetch('{{ url_for("auth.setup_mfa") }}', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ action: 'verify', token: code })
+            });
+            
+            if (!response.ok) {
+                const text = await response.text();
+                messageDiv.textContent = 'Server error: ' + (text || response.statusText);
+                messageDiv.className = 'message error';
+                return;
+            }
+            
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                const text = await response.text();
+                messageDiv.textContent = 'Invalid JSON response from server: ' + text;
+                messageDiv.className = 'message error';
+                return;
+            }
+            
+            if (data.success) {
+                generatedCodes = data.backup_codes;
+                document.getElementById('backupCodes').textContent = data.backup_codes.join('\n');
+                document.getElementById('verifyStep').style.display = 'none';
+                document.getElementById('backupStep').style.display = 'block';
+                messageDiv.textContent = 'MFA enabled successfully!';
+                messageDiv.className = 'message success';
+            } else {
+                messageDiv.textContent = data.message;
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            messageDiv.textContent = 'An error occurred: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    });
+    
+    function downloadBackupCodes() {
+        const element = document.createElement('a');
+        element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(generatedCodes.join('\n')));
+        element.setAttribute('download', 'backup_codes.txt');
+        element.style.display = 'none';
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+    }
+
+    const doneBtn = document.getElementById('doneBtn');
+    if (doneBtn) {
+        doneBtn.addEventListener('click', () => {
+            window.location.href = doneBtn.dataset.dashboardUrl;
+        });
+    }
+</script>
+{% endblock %}
