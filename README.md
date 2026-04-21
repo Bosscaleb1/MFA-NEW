@@ -4,15 +4,15 @@ A complete authentication system with TOTP-based two-factor authentication built
 
 ## Features
 
-✅ User Registration & Login
-✅ TOTP-based Two-Factor Authentication (Google Authenticator compatible)
-✅ Passkey (WebAuthn) registration and sign-in
-✅ QR Code generation for easy authenticator app setup
-✅ Backup codes for account recovery
-✅ SQLite Database for user storage
-✅ Responsive UI with modern design
-✅ Session management
-✅ Password hashing with Werkzeug
+User Registration & Login
+TOTP-based Two-Factor Authentication (Google Authenticator compatible)
+Passkey (WebAuthn) registration and sign-in
+QR Code generation for easy authenticator app setup
+Backup codes for account recovery
+SQLite Database for user storage
+Responsive UI with modern design
+Session management
+Password hashing with Werkzeug
 
 ## Tech Stack
 
@@ -152,7 +152,7 @@ The application uses SQLite which automatically creates `mfa_auth.db` in the roo
 
 ## Security Notes
 
-⚠️ **Important for Production:**
+**Important for Production:**
 - Change the `SECRET_KEY` in `app/__init__.py` to a secure random value
 - Use environment variables for sensitive configuration
 - Enable HTTPS/SSL for production
